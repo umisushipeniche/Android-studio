@@ -26,7 +26,6 @@ public class MainActivity extends Activity {
     private boolean guest = false, portuguese = false, scanBusy = false;
     private String pinnedOrigin = null;
     private String pin = "";
-    private String recoveryHash = "";
     private int wrongAttempts = 0;
     private long blockedUntil = 0;
     // Fixed management recovery credential requested by restaurant owner.
@@ -48,7 +47,6 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         portuguese = getPreferences(0).getBoolean("pt", false);
         pin = getPreferences(0).getString("pin", "");
-        recoveryHash = getPreferences(0).getString("recovery", "");
         getWindow().setStatusBarColor(coffee);
         getWindow().setNavigationBarColor(coffee);
         home();
@@ -92,7 +90,7 @@ public class MainActivity extends Activity {
         root.addView(subtle(t("🌐   普通浏览","🌐   Navegação normal"),()->openBrowser("https://www.google.com",false)));
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.2");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
     private String hash(String input){try{
@@ -112,26 +110,20 @@ public class MainActivity extends Activity {
          .setNegativeButton(t("取消","Cancelar"),null).setPositiveButton(t("保存","Guardar"),(d,w)->{
             String value=field.getText().toString();if(!value.matches("[0-9]{4,8}")){toast(t("需要 4–8 位数字","Use 4–8 dígitos"));return;}
             pin="sha256:"+hash(value);getPreferences(0).edit().putString("pin",pin).apply();
-            if(recoveryHash.isEmpty())generateRecovery();else toast(t("PIN 已更新","PIN atualizado"));
+            toast(t("PIN 已保存","PIN guardado"));
          }).show();
     }
-    private void generateRecovery(){
-        byte[] bytes=new byte[8];new java.security.SecureRandom().nextBytes(bytes);
-        StringBuilder code=new StringBuilder();for(byte v:bytes)code.append(String.format(java.util.Locale.US,"%02X",v&255));
-        recoveryHash=hash(code.toString());getPreferences(0).edit().putString("recovery",recoveryHash).apply();
-        new AlertDialog.Builder(this).setTitle(t("请保存管理员恢复码","Guarde o código de recuperação"))
-          .setMessage(t("请拍照或抄写并安全保存。此码只显示一次：\n\n","Guarde este código em segurança. Só aparece uma vez:\n\n")+code)
-          .setPositiveButton(t("已保存","Guardado"),null).show();
-    }
+    // A fixed recovery credential is provided by the restaurant. Never display it in setup UI.
+    // This is a shared recovery secret, not hardware-backed authentication; keep APK distribution controlled.
     private void resetPin(){
-        if(recoveryHash.isEmpty() && ADMIN_RECOVERY_SHA256.isEmpty()){new AlertDialog.Builder(this).setMessage(t("旧版 PIN 尚未设置恢复码。请先使用原 PIN 修改密码以生成恢复码；如果已忘记，只能由管理员清除应用数据重新设置（会丢失本地数据）。","Esta versão não tem código de recuperação. É necessário limpar os dados da aplicação para reconfigurar, perdendo os dados locais.")).setPositiveButton("OK",null).show();return;}
         if(System.currentTimeMillis()<blockedUntil){toast(t("尝试过多，请稍后重试","Demasiadas tentativas. Aguarde."));return;}
-        EditText field=new EditText(this);field.setHint(t("输入管理员恢复码","Código de recuperação"));field.setSingleLine(true);
-        new AlertDialog.Builder(this).setTitle(t("重设 PIN","Repor PIN")).setView(field)
+        EditText field=new EditText(this);field.setHint(t("管理员恢复密码","Código de recuperação do administrador"));
+        field.setInputType(18);field.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle(t("重设员工 PIN","Repor PIN da equipa")).setView(field)
           .setNegativeButton(t("取消","Cancelar"),null).setPositiveButton(t("验证","Verificar"),(d,w)->{
-            String enteredHash=hash(field.getText().toString().trim().toUpperCase(java.util.Locale.US));
-            if(enteredHash.equals(recoveryHash)||enteredHash.equals(ADMIN_RECOVERY_SHA256)){
-                wrongAttempts=0;recoveryHash="";getPreferences(0).edit().remove("recovery").apply();enterNewPin();
+            String enteredHash=hash(field.getText().toString().trim());
+            if(enteredHash.equals(ADMIN_RECOVERY_SHA256)){
+                wrongAttempts=0;enterNewPin();
             }else{failedPin();}
           }).show();
     }
@@ -278,13 +270,13 @@ public class MainActivity extends Activity {
         String current=web.getUrl();if(current==null||normalize(current)==null){toast(t("请先打开网页","Abra primeiro uma página"));return;}
         guest=true;pinnedOrigin=origin(current);toolbar.setVisibility(View.GONE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-        // Invisible staff-only hotspot: long-press the top-right 48dp corner for 2 seconds.
+        // Invisible staff-only hotspot: long-press the top-right 64dp corner for 3 seconds.
         TextView unlock=new TextView(this);unlock.setBackgroundColor(Color.TRANSPARENT);
-        FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.RIGHT);
+        FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP|Gravity.RIGHT);
         browserFrame.addView(unlock,lp);
         unlock.setOnTouchListener(new View.OnTouchListener(){Handler h=new Handler(Looper.getMainLooper());Runnable task;
             public boolean onTouch(View v,android.view.MotionEvent e){
-                if(e.getAction()==MotionEvent.ACTION_DOWN){task=()->askPin(()->unlockBrowser(unlock));h.postDelayed(task,2000);return true;}
+                if(e.getAction()==MotionEvent.ACTION_DOWN){task=()->askPin(()->unlockBrowser(unlock));h.postDelayed(task,3000);return true;}
                 if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){if(task!=null)h.removeCallbacks(task);return true;}
                 return true;
             }
@@ -293,16 +285,20 @@ public class MainActivity extends Activity {
     private void unlockBrowser(View hotspot){guest=false;pinnedOrigin=null;browserFrame.removeView(hotspot);
         toolbar.setVisibility(View.VISIBLE);getWindow().getDecorView().setSystemUiVisibility(0);
         if(address!=null&&web!=null)address.setText(web.getUrl());
+        new AlertDialog.Builder(this).setTitle(t("已解锁","Desbloqueado"))
+          .setMessage(t("扫描下一桌，或继续浏览当前网页。","Leia o QR da próxima mesa ou continue a navegar."))
+          .setPositiveButton(t("▣  扫描下一桌","▣  Ler próxima mesa"),(d,w)->scan())
+          .setNegativeButton(t("继续浏览","Continuar a navegar"),null).show();
     }
     private void small(String title,Runnable action){TextView b=new TextView(this);b.setText(title);b.setTextColor(gold);
         b.setTextSize(27);b.setGravity(Gravity.CENTER);b.setMinWidth(dp(52));b.setMinHeight(dp(64));
         b.setPadding(dp(8),dp(8),dp(8),dp(8));toolbar.addView(b);b.setOnClickListener(v->action.run());}
     private void lockButton(){TextView b=new TextView(this);
-        b.setText(t("🔒上锁","🔒Bloquear"));b.setTextColor(coffee);b.setTextSize(17);
+        b.setText(t("🔒上锁","🔒Bloquear"));b.setTextColor(coffee);b.setTextSize(19);
         b.setTypeface(null,android.graphics.Typeface.BOLD);b.setGravity(Gravity.CENTER);
-        b.setBackground(bg(gold,12));b.setMinHeight(dp(62));b.setMinWidth(dp(104));
+        b.setBackground(bg(gold,12));b.setMinHeight(dp(66));b.setMinWidth(dp(114));
         b.setPadding(dp(10),dp(8),dp(10),dp(8));
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(62));lp.setMargins(dp(4),0,dp(7),0);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(66));lp.setMargins(dp(4),0,dp(7),0);
         toolbar.addView(b,lp);b.setOnClickListener(v->lockBrowser());}
     private void endGuest() {
         if(web!=null){web.stopLoading();web.loadUrl("about:blank");web.clearHistory();web.clearCache(true);web.clearFormData();}
@@ -311,6 +307,6 @@ public class MainActivity extends Activity {
         home();
     }
     private void toast(String s){runOnUiThread(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
-    @Override public void onBackPressed(){if(guest){toast(t("请员工长按右上角 2 秒解锁", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
+    @Override public void onBackPressed(){if(guest){toast(t("请员工长按右上角 3 秒解锁", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
     @Override protected void onDestroy(){stopCamera();if(web!=null)web.destroy();super.onDestroy();}
 }
