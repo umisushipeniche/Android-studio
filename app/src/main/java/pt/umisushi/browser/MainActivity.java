@@ -29,6 +29,8 @@ public class MainActivity extends Activity {
     private String recoveryHash = "";
     private int wrongAttempts = 0;
     private long blockedUntil = 0;
+    // Fixed management recovery credential requested by restaurant owner.
+    private static final String ADMIN_RECOVERY_SHA256 = "9966ac246aa570868f183fe36e0e938257762811fb13d797b11a7efeafdd0920";
     private FrameLayout browserFrame;
     private CameraDevice camera;
     private CameraCaptureSession cameraSession;
@@ -90,7 +92,7 @@ public class MainActivity extends Activity {
         root.addView(subtle(t("🌐   普通浏览","🌐   Navegação normal"),()->openBrowser("https://www.google.com",false)));
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.1");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.2");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
     private String hash(String input){try{
@@ -122,12 +124,13 @@ public class MainActivity extends Activity {
           .setPositiveButton(t("已保存","Guardado"),null).show();
     }
     private void resetPin(){
-        if(recoveryHash.isEmpty()){new AlertDialog.Builder(this).setMessage(t("旧版 PIN 尚未设置恢复码。请先使用原 PIN 修改密码以生成恢复码；如果已忘记，只能由管理员清除应用数据重新设置（会丢失本地数据）。","Esta versão não tem código de recuperação. É necessário limpar os dados da aplicação para reconfigurar, perdendo os dados locais.")).setPositiveButton("OK",null).show();return;}
+        if(recoveryHash.isEmpty() && ADMIN_RECOVERY_SHA256.isEmpty()){new AlertDialog.Builder(this).setMessage(t("旧版 PIN 尚未设置恢复码。请先使用原 PIN 修改密码以生成恢复码；如果已忘记，只能由管理员清除应用数据重新设置（会丢失本地数据）。","Esta versão não tem código de recuperação. É necessário limpar os dados da aplicação para reconfigurar, perdendo os dados locais.")).setPositiveButton("OK",null).show();return;}
         if(System.currentTimeMillis()<blockedUntil){toast(t("尝试过多，请稍后重试","Demasiadas tentativas. Aguarde."));return;}
         EditText field=new EditText(this);field.setHint(t("输入管理员恢复码","Código de recuperação"));field.setSingleLine(true);
         new AlertDialog.Builder(this).setTitle(t("重设 PIN","Repor PIN")).setView(field)
           .setNegativeButton(t("取消","Cancelar"),null).setPositiveButton(t("验证","Verificar"),(d,w)->{
-            if(hash(field.getText().toString().trim().toUpperCase(java.util.Locale.US)).equals(recoveryHash)){
+            String enteredHash=hash(field.getText().toString().trim().toUpperCase(java.util.Locale.US));
+            if(enteredHash.equals(recoveryHash)||enteredHash.equals(ADMIN_RECOVERY_SHA256)){
                 wrongAttempts=0;recoveryHash="";getPreferences(0).edit().remove("recovery").apply();enterNewPin();
             }else{failedPin();}
           }).show();
@@ -148,7 +151,7 @@ public class MainActivity extends Activity {
         }
         stopCamera(); if(web!=null){web.stopLoading();web.destroy();web=null;} scanBusy=false; base();
         TextView help = new TextView(this); help.setText(t("对准桌台或其他二维码", "Aponte para o código QR"));
-        help.setTextColor(coffee); help.setTextSize(19); help.setGravity(Gravity.CENTER); help.setPadding(10,20,10,20); root.addView(help);
+        help.setTextColor(gold); help.setTextSize(19); help.setGravity(Gravity.CENTER); help.setPadding(10,20,10,20); root.addView(help);
         preview = new TextureView(this); root.addView(preview, new LinearLayout.LayoutParams(-1, 0, 1));
         root.addView(button(t("取消", "Cancelar"), this::home));
         preview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
@@ -233,23 +236,24 @@ public class MainActivity extends Activity {
     private void openBrowser(String url,boolean lock) {
         stopCamera();guest=false;pinnedOrigin=null;base();
         toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setBackgroundColor(coffee);
-        root.addView(toolbar,new LinearLayout.LayoutParams(-1,dp(56)));
+        root.addView(toolbar,new LinearLayout.LayoutParams(-1,dp(76)));
         small("‹",()->{if(web.canGoBack())web.goBack();});
         small("›",()->{if(web.canGoForward())web.goForward();});
         address=new EditText(this);address.setSingleLine(true);address.setTextColor(0xfff3e8d7);
         address.setHintTextColor(0xffb4a594);address.setHint("https://");address.setTextSize(13);
-        toolbar.addView(address,new LinearLayout.LayoutParams(0,dp(52),1));
+        toolbar.addView(address,new LinearLayout.LayoutParams(0,dp(64),1));
         address.setOnEditorActionListener((v,a,event)->{
             String typed=address.getText().toString().trim();if(typed.isEmpty())return true;
             String target=normalize(typed);if(target==null)target="https://www.google.com/search?q="+Uri.encode(typed);
             web.loadUrl(target);((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);return true;
         });
-        small("↻",()->web.reload());small("▣",this::scan);small("🔒",this::lockBrowser);small("⌂",this::home);
+        small("↻",()->web.reload());small("▣",this::scan);lockButton();
         browserFrame=new FrameLayout(this);root.addView(browserFrame,new LinearLayout.LayoutParams(-1,0,1));
         web=new WebView(this);browserFrame.addView(web,new FrameLayout.LayoutParams(-1,-1));
         WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
         settings.setSupportZoom(true);settings.setBuiltInZoomControls(true);settings.setDisplayZoomControls(false);
         settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);settings.setSupportMultipleWindows(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
         web.setWebViewClient(new WebViewClient(){
@@ -264,6 +268,7 @@ public class MainActivity extends Activity {
             @Override public void onPageFinished(WebView view,String current){if(!guest&&address!=null)address.setText(current);}
         });
         web.setWebChromeClient(new WebChromeClient());
+        web.setDownloadListener((u,agent,disposition,mime,length)->toast(t("暂不支持文件下载","Transferência de ficheiros indisponível")));
         web.loadUrl(url);
         if(lock)lockBrowser();
     }
@@ -290,7 +295,15 @@ public class MainActivity extends Activity {
         if(address!=null&&web!=null)address.setText(web.getUrl());
     }
     private void small(String title,Runnable action){TextView b=new TextView(this);b.setText(title);b.setTextColor(gold);
-        b.setTextSize(18);b.setGravity(Gravity.CENTER);b.setPadding(dp(9),dp(8),dp(9),dp(8));toolbar.addView(b);b.setOnClickListener(v->action.run());}
+        b.setTextSize(27);b.setGravity(Gravity.CENTER);b.setMinWidth(dp(52));b.setMinHeight(dp(64));
+        b.setPadding(dp(8),dp(8),dp(8),dp(8));toolbar.addView(b);b.setOnClickListener(v->action.run());}
+    private void lockButton(){TextView b=new TextView(this);
+        b.setText(t("🔒上锁","🔒Bloquear"));b.setTextColor(coffee);b.setTextSize(17);
+        b.setTypeface(null,android.graphics.Typeface.BOLD);b.setGravity(Gravity.CENTER);
+        b.setBackground(bg(gold,12));b.setMinHeight(dp(62));b.setMinWidth(dp(104));
+        b.setPadding(dp(10),dp(8),dp(10),dp(8));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(62));lp.setMargins(dp(4),0,dp(7),0);
+        toolbar.addView(b,lp);b.setOnClickListener(v->lockBrowser());}
     private void endGuest() {
         if(web!=null){web.stopLoading();web.loadUrl("about:blank");web.clearHistory();web.clearCache(true);web.clearFormData();}
         CookieManager.getInstance().removeAllCookies(null);CookieManager.getInstance().flush();
