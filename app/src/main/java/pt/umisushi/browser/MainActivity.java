@@ -13,6 +13,7 @@ import android.media.ImageReader;
 import android.net.Uri;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
+import android.content.res.Configuration;
 import android.webkit.*;
 import android.widget.*;
 import com.google.zxing.*;
@@ -55,6 +56,7 @@ public class MainActivity extends Activity {
         home();
     }
     private int dp(int x) {return (int)(getResources().getDisplayMetrics().density*x+0.5f);}
+    private float dp(float x) {return getResources().getDisplayMetrics().density*x;}
     private android.graphics.drawable.GradientDrawable bg(int color,int radius) {
         android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();
         d.setColor(color);d.setCornerRadius(dp(radius));return d;
@@ -93,7 +95,7 @@ public class MainActivity extends Activity {
         root.addView(subtle(t("🌐   普通浏览","🌐   Navegação normal"),()->openBrowser("https://www.google.com",false)));
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.2");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.3");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
     private String hash(String input){try{
@@ -388,7 +390,7 @@ public class MainActivity extends Activity {
         cancel.setOnClickListener(v->dialog.dismiss());
         TextView recover=uiText(recoveryMode?t("返回员工解锁","Voltar ao PIN"):t("忘记 PIN？","Esqueceu o PIN?"),15,0xffe6c48a);
         footer.addView(recover,new LinearLayout.LayoutParams(0,dp(45),1));
-        recover.setOnClickListener(v->{dialog.dismiss();unlockDialogOpen=true;showCodeDialog(!recoveryMode);});
+        recover.setOnClickListener(v->{dialog.setOnDismissListener(null);dialog.dismiss();unlockDialogOpen=true;showCodeDialog(!recoveryMode);});
         panel.addView(footer);
         dialog.setContentView(panel);
         android.view.Window window=dialog.getWindow();
@@ -418,13 +420,28 @@ public class MainActivity extends Activity {
         toolbar.setVisibility(View.VISIBLE);
         setGuestFullscreen(false);
         if(address!=null&&web!=null)address.setText(web.getUrl());
-        // Keep the current page; do not reload or destroy the WebView.
-        new AlertDialog.Builder(this)
-            .setTitle(t("已解锁","Desbloqueado"))
-            .setMessage(t("准备好下一桌了吗？","Pronto para a próxima mesa?"))
-            .setPositiveButton(t("▣  扫描下一桌","▣  Ler próxima mesa"),(d,w)->scan())
-            .setNegativeButton(t("继续浏览","Continuar a navegar"),null)
-            .show();
+        // In-app gold action sheet instead of an Android system alert.
+        Dialog next=new Dialog(this);
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20),dp(16),dp(20),dp(18));panel.setBackground(bg(0xff30241e,22));
+        TextView title=uiText(t("已解锁","Desbloqueado"),23,0xffebd3a3);
+        title.setTypeface(null,android.graphics.Typeface.BOLD);
+        panel.addView(title,new LinearLayout.LayoutParams(-1,dp(52)));
+        TextView scanNext=uiText(t("▣  扫描下一桌","▣  Ler próxima mesa"),21,0xff271d17);
+        scanNext.setTypeface(null,android.graphics.Typeface.BOLD);
+        scanNext.setBackground(bg(0xffdfc38e,14));
+        LinearLayout.LayoutParams action=new LinearLayout.LayoutParams(-1,dp(68));
+        action.setMargins(0,dp(10),0,dp(10));panel.addView(scanNext,action);
+        scanNext.setOnClickListener(v->{next.dismiss();scan();});
+        TextView continueButton=uiText(t("继续浏览","Continuar a navegar"),17,0xffe6d1ae);
+        continueButton.setBackground(bg(0xff49382e,13));
+        panel.addView(continueButton,new LinearLayout.LayoutParams(-1,dp(54)));
+        continueButton.setOnClickListener(v->next.dismiss());
+        next.setContentView(panel);next.show();
+        if(next.getWindow()!=null){
+            next.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            next.getWindow().setLayout(Math.min(dp(420),getResources().getDisplayMetrics().widthPixels-dp(30)),WindowManager.LayoutParams.WRAP_CONTENT);
+        }
     }
     private void small(String title,Runnable action){
         TextView b=new TextView(this);
@@ -442,8 +459,20 @@ public class MainActivity extends Activity {
         holder.setOrientation(LinearLayout.HORIZONTAL);
         holder.setGravity(Gravity.CENTER);
         holder.setBackground(bg(0xffd8b77d,15));
-        TextView symbol=uiText("🔒",23,0xff271d17);
-        holder.addView(symbol,new LinearLayout.LayoutParams(dp(35),-1));
+        View symbol=new View(this){
+            private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas c){
+                super.onDraw(c);
+                float cx=getWidth()/2f,cy=getHeight()/2f;
+                paint.setColor(0xff271d17);paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(2.7f));paint.setStrokeCap(Paint.Cap.ROUND);
+                c.drawRoundRect(cx-dp(7),cy-dp(12),cx+dp(7),cy+dp(4),dp(7),dp(7),paint);
+                paint.setStyle(Paint.Style.FILL);
+                c.drawRoundRect(cx-dp(12),cy-dp(2),cx+dp(12),cy+dp(15),dp(3),dp(3),paint);
+                paint.setColor(0xffd8b77d);c.drawCircle(cx,cy+dp(5),dp(2),paint);
+            }
+        };
+        holder.addView(symbol,new LinearLayout.LayoutParams(dp(36),-1));
         TextView title=uiText(t("上锁","Bloquear"),19,0xff271d17);
         title.setTypeface(null,android.graphics.Typeface.BOLD);
         holder.addView(title);
@@ -461,5 +490,6 @@ public class MainActivity extends Activity {
     }
     private void toast(String s){runOnUiThread(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
     @Override public void onBackPressed(){if(guest){toast(t("请员工长按右上角 3 秒解锁", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
+    @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);}
     @Override protected void onDestroy(){stopCamera();if(web!=null)web.destroy();super.onDestroy();}
 }
