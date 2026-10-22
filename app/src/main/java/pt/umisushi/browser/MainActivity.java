@@ -31,6 +31,9 @@ public class MainActivity extends Activity {
     // Fixed management recovery credential requested by restaurant owner.
     private static final String ADMIN_RECOVERY_SHA256 = "9966ac246aa570868f183fe36e0e938257762811fb13d797b11a7efeafdd0920";
     private FrameLayout browserFrame;
+    private View unlockHotspot;
+    private boolean unlockDialogOpen = false;
+    private final Handler unlockHandler = new Handler(Looper.getMainLooper());
     private CameraDevice camera;
     private CameraCaptureSession cameraSession;
     private ImageReader reader;
@@ -71,7 +74,7 @@ public class MainActivity extends Activity {
         TextView b=button(label,click);b.setTextColor(0xffe6d9c5);b.setTextSize(15);b.setBackground(bg(0xff3b302b,14));return b;
     }
     private void home() {
-        stopCamera();guest=false;pinnedOrigin=null;address=null;
+        stopCamera();guest=false;pinnedOrigin=null;address=null;unlockHotspot=null;unlockDialogOpen=false;
         getWindow().getDecorView().setSystemUiVisibility(0);
         if(web!=null){web.stopLoading();web.destroy();web=null;}
         base();
@@ -226,7 +229,7 @@ public class MainActivity extends Activity {
         try{Uri u=Uri.parse(url);return u.getScheme()+"://"+u.getHost()+(u.getPort()==-1?"":":"+u.getPort());}catch(Exception e){return "";}
     }
     private void openBrowser(String url,boolean lock) {
-        stopCamera();guest=false;pinnedOrigin=null;base();
+        stopCamera();guest=false;pinnedOrigin=null;unlockHotspot=null;unlockDialogOpen=false;setGuestFullscreen(false);base();
         toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setBackgroundColor(coffee);
         root.addView(toolbar,new LinearLayout.LayoutParams(-1,dp(76)));
         small("‹",()->{if(web.canGoBack())web.goBack();});
@@ -264,42 +267,185 @@ public class MainActivity extends Activity {
         web.loadUrl(url);
         if(lock)lockBrowser();
     }
+    // Keep Android screen pinning independent from the browser's staff/customer state.
+    private void setGuestFullscreen(boolean enabled) {
+        getWindow().getDecorView().setSystemUiVisibility(enabled
+            ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            : 0);
+    }
     private void lockBrowser(){
-        if(pin.isEmpty()){new AlertDialog.Builder(this).setTitle(t("请先设置员工 PIN","Defina primeiro o PIN"))
-            .setPositiveButton(t("设置","Definir"),(d,w)->enterNewPin()).setNegativeButton(t("取消","Cancelar"),null).show();return;}
-        String current=web.getUrl();if(current==null||normalize(current)==null){toast(t("请先打开网页","Abra primeiro uma página"));return;}
-        guest=true;pinnedOrigin=origin(current);toolbar.setVisibility(View.GONE);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-        // Invisible staff-only hotspot: long-press the top-right 64dp corner for 3 seconds.
-        TextView unlock=new TextView(this);unlock.setBackgroundColor(Color.TRANSPARENT);
-        FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(dp(64),dp(64),Gravity.TOP|Gravity.RIGHT);
-        browserFrame.addView(unlock,lp);
-        unlock.setOnTouchListener(new View.OnTouchListener(){Handler h=new Handler(Looper.getMainLooper());Runnable task;
-            public boolean onTouch(View v,android.view.MotionEvent e){
-                if(e.getAction()==MotionEvent.ACTION_DOWN){task=()->askPin(()->unlockBrowser(unlock));h.postDelayed(task,3000);return true;}
-                if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){if(task!=null)h.removeCallbacks(task);return true;}
+        if(guest)return;
+        if(pin.isEmpty()){
+            new AlertDialog.Builder(this).setTitle(t("请先设置员工 PIN","Defina primeiro o PIN"))
+                .setPositiveButton(t("设置","Definir"),(d,w)->enterNewPin())
+                .setNegativeButton(t("取消","Cancelar"),null).show();
+            return;
+        }
+        if(web==null)return;
+        String current=web.getUrl();
+        if(current==null||normalize(current)==null){toast(t("请先打开网页","Abra primeiro uma página"));return;}
+        guest=true;
+        pinnedOrigin=origin(current);
+        toolbar.setVisibility(View.GONE);
+        setGuestFullscreen(true);
+        // The hotspot belongs to the window content, not the WebView. This avoids
+        // losing the unlock target when the WebView redraws or navigates.
+        if(unlockHotspot!=null && unlockHotspot.getParent() instanceof android.view.ViewGroup)
+            ((android.view.ViewGroup)unlockHotspot.getParent()).removeView(unlockHotspot);
+        TextView hotspot=new TextView(this);
+        hotspot.setContentDescription(t("员工解锁区域：长按三秒","Zona de desbloqueio: manter premido 3 segundos"));
+        hotspot.setBackgroundColor(Color.TRANSPARENT);
+        FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(dp(96),dp(96),Gravity.TOP|Gravity.RIGHT);
+        browserFrame.addView(hotspot,lp);
+        unlockHotspot=hotspot;
+        hotspot.bringToFront();
+        hotspot.setOnTouchListener(new View.OnTouchListener(){
+            Runnable pending;
+            boolean fired=false;
+            @Override public boolean onTouch(View v,MotionEvent event){
+                switch(event.getActionMasked()){
+                    case MotionEvent.ACTION_DOWN:
+                        fired=false;
+                        pending=()->{
+                            fired=true;
+                            if(guest && !unlockDialogOpen) showStaffUnlock();
+                        };
+                        unlockHandler.postDelayed(pending,3000);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                    case MotionEvent.ACTION_MOVE:
+                        if(event.getActionMasked()==MotionEvent.ACTION_MOVE
+                            && event.getX()>=0 && event.getY()>=0
+                            && event.getX()<v.getWidth() && event.getY()<v.getHeight())return true;
+                        if(pending!=null)unlockHandler.removeCallbacks(pending);
+                        return true;
+                }
                 return true;
             }
         });
     }
-    private void unlockBrowser(View hotspot){guest=false;pinnedOrigin=null;browserFrame.removeView(hotspot);
-        toolbar.setVisibility(View.VISIBLE);getWindow().getDecorView().setSystemUiVisibility(0);
-        if(address!=null&&web!=null)address.setText(web.getUrl());
-        new AlertDialog.Builder(this).setTitle(t("已解锁","Desbloqueado"))
-          .setMessage(t("扫描下一桌，或继续浏览当前网页。","Leia o QR da próxima mesa ou continue a navegar."))
-          .setPositiveButton(t("▣  扫描下一桌","▣  Ler próxima mesa"),(d,w)->scan())
-          .setNegativeButton(t("继续浏览","Continuar a navegar"),null).show();
+    private void showStaffUnlock(){
+        if(!guest||unlockDialogOpen)return;
+        unlockDialogOpen=true;
+        // Temporarily show system bars so the PIN dialog/keyboard cannot be hidden
+        // behind immersive navigation; restore guest fullscreen on cancellation.
+        setGuestFullscreen(false);
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(24),dp(14),dp(24),dp(6));
+        panel.setBackground(bg(0xff302621,20));
+        TextView heading=new TextView(this);
+        heading.setText(t("员工解锁","Desbloquear para equipa"));
+        heading.setTextColor(gold);heading.setTextSize(22);
+        heading.setGravity(Gravity.CENTER);
+        panel.addView(heading,new LinearLayout.LayoutParams(-1,dp(54)));
+        EditText field=new EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER |
+            android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        field.setHint(t("输入员工 PIN","Introduza o PIN"));
+        field.setTextColor(Color.WHITE);field.setHintTextColor(0xffbaa993);
+        panel.addView(field,new LinearLayout.LayoutParams(-1,dp(60)));
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setView(panel)
+            .setNegativeButton(t("取消","Cancelar"),(d,w)->{})
+            .setNeutralButton(t("忘记 PIN","Esqueceu o PIN"),(d,w)->resetPinFromLock())
+            .setPositiveButton(t("解锁","Desbloquear"),null)
+            .create();
+        dialog.setOnShowListener(d->{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(0xff9a7235);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                if(System.currentTimeMillis()<blockedUntil){
+                    toast(t("尝试过多，请稍后重试","Aguarde"));return;
+                }
+                if(validPin(field.getText().toString())){
+                    wrongAttempts=0;
+                    dialog.dismiss();
+                    unlockBrowser();
+                } else failedPin();
+            });
+        });
+        dialog.setOnDismissListener(d->{
+            unlockDialogOpen=false;
+            if(guest)setGuestFullscreen(true);
+        });
+        dialog.show();
     }
-    private void small(String title,Runnable action){TextView b=new TextView(this);b.setText(title);b.setTextColor(gold);
-        b.setTextSize(27);b.setGravity(Gravity.CENTER);b.setMinWidth(dp(52));b.setMinHeight(dp(64));
-        b.setPadding(dp(8),dp(8),dp(8),dp(8));toolbar.addView(b);b.setOnClickListener(v->action.run());}
-    private void lockButton(){TextView b=new TextView(this);
-        b.setText(t("🔒上锁","🔒Bloquear"));b.setTextColor(coffee);b.setTextSize(19);
-        b.setTypeface(null,android.graphics.Typeface.BOLD);b.setGravity(Gravity.CENTER);
-        b.setBackground(bg(gold,12));b.setMinHeight(dp(66));b.setMinWidth(dp(114));
-        b.setPadding(dp(10),dp(8),dp(10),dp(8));
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(66));lp.setMargins(dp(4),0,dp(7),0);
-        toolbar.addView(b,lp);b.setOnClickListener(v->lockBrowser());}
+    private void resetPinFromLock(){
+        setGuestFullscreen(false);
+        EditText recovery=new EditText(this);
+        recovery.setInputType(android.text.InputType.TYPE_CLASS_NUMBER |
+            android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        recovery.setHint(t("管理员恢复码","Código de recuperação"));
+        AlertDialog dlg=new AlertDialog.Builder(this)
+            .setTitle(t("管理员恢复","Recuperação do administrador"))
+            .setView(recovery)
+            .setNegativeButton(t("取消","Cancelar"),null)
+            .setPositiveButton(t("验证","Verificar"),null)
+            .create();
+        dlg.setOnShowListener(d->dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            if(System.currentTimeMillis()<blockedUntil){toast(t("请稍后再试","Aguarde"));return;}
+            if(hash(recovery.getText().toString().trim()).equals(ADMIN_RECOVERY_SHA256)){
+                wrongAttempts=0;
+                dlg.dismiss();
+                // Restore staff mode only after successful administrator authentication.
+                unlockBrowser();
+                enterNewPin();
+            }else failedPin();
+        }));
+        dlg.setOnDismissListener(d->{if(guest)setGuestFullscreen(true);});
+        dlg.show();
+    }
+    private void unlockBrowser(){
+        guest=false;pinnedOrigin=null;
+        if(unlockHotspot!=null && unlockHotspot.getParent() instanceof android.view.ViewGroup)
+            ((android.view.ViewGroup)unlockHotspot.getParent()).removeView(unlockHotspot);
+        unlockHotspot=null;
+        toolbar.setVisibility(View.VISIBLE);
+        setGuestFullscreen(false);
+        if(address!=null&&web!=null)address.setText(web.getUrl());
+        // Keep the current page; do not reload or destroy the WebView.
+        new AlertDialog.Builder(this)
+            .setTitle(t("已解锁","Desbloqueado"))
+            .setMessage(t("准备好下一桌了吗？","Pronto para a próxima mesa?"))
+            .setPositiveButton(t("▣  扫描下一桌","▣  Ler próxima mesa"),(d,w)->scan())
+            .setNegativeButton(t("继续浏览","Continuar a navegar"),null)
+            .show();
+    }
+    private void small(String title,Runnable action){
+        TextView b=new TextView(this);
+        b.setText(title);b.setTextColor(0xffe9d7b8);b.setTextSize(27);
+        b.setGravity(Gravity.CENTER);
+        b.setBackground(bg(0xff493b33,12));
+        b.setMinWidth(dp(54));b.setMinHeight(dp(62));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(54),dp(62));
+        lp.setMargins(dp(3),0,dp(3),0);
+        toolbar.addView(b,lp);
+        b.setOnClickListener(v->action.run());
+    }
+    private void lockButton(){
+        LinearLayout holder=new LinearLayout(this);
+        holder.setOrientation(LinearLayout.HORIZONTAL);
+        holder.setGravity(Gravity.CENTER);
+        holder.setBackground(bg(0xffdfc38e,15));
+        TextView symbol=new TextView(this);
+        symbol.setText("🔒");symbol.setTextSize(25);symbol.setGravity(Gravity.CENTER);
+        holder.addView(symbol,new LinearLayout.LayoutParams(dp(32),-1));
+        TextView title=new TextView(this);
+        title.setText(t("上锁","Bloquear"));
+        title.setTextColor(0xff251b16);title.setTextSize(19);
+        title.setTypeface(null,android.graphics.Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        holder.addView(title);
+        holder.setPadding(dp(8),0,dp(8),0);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(portuguese?146:126),dp(66));
+        lp.setMargins(dp(7),0,dp(8),0);
+        toolbar.addView(holder,lp);
+        holder.setOnClickListener(v->lockBrowser());
+    }
     private void endGuest() {
         if(web!=null){web.stopLoading();web.loadUrl("about:blank");web.clearHistory();web.clearCache(true);web.clearFormData();}
         CookieManager.getInstance().removeAllCookies(null);CookieManager.getInstance().flush();
