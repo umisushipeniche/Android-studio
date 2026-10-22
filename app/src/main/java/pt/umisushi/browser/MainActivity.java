@@ -93,7 +93,7 @@ public class MainActivity extends Activity {
         root.addView(subtle(t("🌐   普通浏览","🌐   Navegação normal"),()->openBrowser("https://www.google.com",false)));
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.2");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
     private String hash(String input){try{
@@ -260,7 +260,7 @@ public class MainActivity extends Activity {
                 }
                 return false;
             }
-            @Override public void onPageFinished(WebView view,String current){if(!guest&&address!=null)address.setText(current);}
+            @Override public void onPageFinished(WebView view,String current){if(!guest&&address!=null)address.setText(current);if(guest&&unlockHotspot!=null)unlockHotspot.bringToFront();}
         });
         web.setWebChromeClient(new WebChromeClient());
         web.setDownloadListener((u,agent,disposition,mime,length)->toast(t("暂不支持文件下载","Transferência de ficheiros indisponível")));
@@ -327,77 +327,88 @@ public class MainActivity extends Activity {
             }
         });
     }
+    private TextView uiText(String text,int size,int color){
+        TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);
+        v.setGravity(Gravity.CENTER);return v;
+    }
     private void showStaffUnlock(){
         if(!guest||unlockDialogOpen)return;
         unlockDialogOpen=true;
-        // Temporarily show system bars so the PIN dialog/keyboard cannot be hidden
-        // behind immersive navigation; restore guest fullscreen on cancellation.
+        showCodeDialog(false);
+    }
+    // Entire keypad is app-owned: no platform AlertDialog white footer or soft keyboard.
+    private void showCodeDialog(boolean recoveryMode){
         setGuestFullscreen(false);
-        LinearLayout panel=new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(24),dp(14),dp(24),dp(6));
-        panel.setBackground(bg(0xff302621,20));
-        TextView heading=new TextView(this);
-        heading.setText(t("员工解锁","Desbloquear para equipa"));
-        heading.setTextColor(gold);heading.setTextSize(22);
-        heading.setGravity(Gravity.CENTER);
-        panel.addView(heading,new LinearLayout.LayoutParams(-1,dp(54)));
-        EditText field=new EditText(this);
-        field.setSingleLine(true);
-        field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER |
-            android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        field.setHint(t("输入员工 PIN","Introduza o PIN"));
-        field.setTextColor(Color.WHITE);field.setHintTextColor(0xffbaa993);
-        panel.addView(field,new LinearLayout.LayoutParams(-1,dp(60)));
-        AlertDialog dialog=new AlertDialog.Builder(this)
-            .setView(panel)
-            .setNegativeButton(t("取消","Cancelar"),(d,w)->{})
-            .setNeutralButton(t("忘记 PIN","Esqueceu o PIN"),(d,w)->resetPinFromLock())
-            .setPositiveButton(t("解锁","Desbloquear"),null)
-            .create();
-        dialog.setOnShowListener(d->{
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(0xff9a7235);
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-                if(System.currentTimeMillis()<blockedUntil){
-                    toast(t("尝试过多，请稍后重试","Aguarde"));return;
-                }
-                if(validPin(field.getText().toString())){
-                    wrongAttempts=0;
-                    dialog.dismiss();
-                    unlockBrowser();
-                } else failedPin();
-            });
-        });
+        final Dialog dialog=new Dialog(this);
+        dialog.getWindow();
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20),dp(14),dp(20),dp(14));
+        panel.setBackground(bg(0xff30241e,22));
+        TextView header=uiText(recoveryMode?t("管理员恢复","Recuperação do administrador"):t("员工解锁","Desbloquear equipa"),22,0xffebd3a3);
+        header.setTypeface(null,android.graphics.Typeface.BOLD);
+        panel.addView(header,new LinearLayout.LayoutParams(-1,dp(42)));
+        TextView caption=uiText(recoveryMode?t("请输入管理员恢复码","Introduza o código de recuperação"):t("请输入员工 PIN","Introduza o PIN da equipa"),14,0xffc9b8a0);
+        panel.addView(caption,new LinearLayout.LayoutParams(-1,dp(34)));
+        final StringBuilder entered=new StringBuilder();
+        TextView dots=uiText("○ ○ ○ ○",23,0xffdfc38e);
+        panel.addView(dots,new LinearLayout.LayoutParams(-1,dp(48)));
+        final int[] keys={1,2,3,4,5,6,7,8,9,-1,0,-2};
+        for(int r=0;r<4;r++){
+            LinearLayout line=new LinearLayout(this);line.setGravity(Gravity.CENTER);
+            for(int c=0;c<3;c++){
+                int key=keys[r*3+c];
+                String label=key==-1?"⌫":key==-2?"✓":String.valueOf(key);
+                TextView digit=uiText(label,25,key==-2?0xff271d17:0xfff6e7d3);
+                digit.setBackground(bg(key==-2?0xffdfc38e:0xff49382e,13));
+                LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,dp(53),1);
+                cell.setMargins(dp(4),dp(4),dp(4),dp(4));line.addView(digit,cell);
+                digit.setOnClickListener(v->{
+                    if(key==-1){if(entered.length()>0)entered.deleteCharAt(entered.length()-1);}
+                    else if(key==-2){
+                        if(System.currentTimeMillis()<blockedUntil){toast(t("请稍后再试","Aguarde"));return;}
+                        String value=entered.toString();
+                        boolean ok=recoveryMode?hash(value).equals(ADMIN_RECOVERY_SHA256):validPin(value);
+                        if(ok){
+                            wrongAttempts=0;dialog.dismiss();
+                            unlockDialogOpen=false;
+                            unlockBrowser();
+                            if(recoveryMode)enterNewPin();
+                        }else{failedPin();entered.setLength(0);}
+                    }else if(entered.length()<16)entered.append(key);
+                    StringBuilder masked=new StringBuilder();
+                    for(int i=0;i<entered.length();i++)masked.append("● ");
+                    dots.setText(masked.length()==0?"○ ○ ○ ○":masked.toString());
+                });
+            }
+            panel.addView(line,new LinearLayout.LayoutParams(-1,dp(61)));
+        }
+        LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL);
+        TextView cancel=uiText(t("取消","Cancelar"),15,0xffd4c1a4);
+        footer.addView(cancel,new LinearLayout.LayoutParams(0,dp(45),1));
+        cancel.setOnClickListener(v->dialog.dismiss());
+        TextView recover=uiText(recoveryMode?t("返回员工解锁","Voltar ao PIN"):t("忘记 PIN？","Esqueceu o PIN?"),15,0xffe6c48a);
+        footer.addView(recover,new LinearLayout.LayoutParams(0,dp(45),1));
+        recover.setOnClickListener(v->{dialog.dismiss();unlockDialogOpen=true;showCodeDialog(!recoveryMode);});
+        panel.addView(footer);
+        dialog.setContentView(panel);
+        android.view.Window window=dialog.getWindow();
+        if(window!=null){
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attrs=window.getAttributes();attrs.dimAmount=0.60f;
+            window.setAttributes(attrs);
+            int width=Math.min(dp(420),getResources().getDisplayMetrics().widthPixels-dp(30));
+            window.setLayout(width,WindowManager.LayoutParams.WRAP_CONTENT);
+        }
         dialog.setOnDismissListener(d->{
             unlockDialogOpen=false;
             if(guest)setGuestFullscreen(true);
         });
         dialog.show();
-    }
-    private void resetPinFromLock(){
-        setGuestFullscreen(false);
-        EditText recovery=new EditText(this);
-        recovery.setInputType(android.text.InputType.TYPE_CLASS_NUMBER |
-            android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        recovery.setHint(t("管理员恢复码","Código de recuperação"));
-        AlertDialog dlg=new AlertDialog.Builder(this)
-            .setTitle(t("管理员恢复","Recuperação do administrador"))
-            .setView(recovery)
-            .setNegativeButton(t("取消","Cancelar"),null)
-            .setPositiveButton(t("验证","Verificar"),null)
-            .create();
-        dlg.setOnShowListener(d->dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            if(System.currentTimeMillis()<blockedUntil){toast(t("请稍后再试","Aguarde"));return;}
-            if(hash(recovery.getText().toString().trim()).equals(ADMIN_RECOVERY_SHA256)){
-                wrongAttempts=0;
-                dlg.dismiss();
-                // Restore staff mode only after successful administrator authentication.
-                unlockBrowser();
-                enterNewPin();
-            }else failedPin();
-        }));
-        dlg.setOnDismissListener(d->{if(guest)setGuestFullscreen(true);});
-        dlg.show();
+        if(dialog.getWindow()!=null){
+            int width=Math.min(dp(420),getResources().getDisplayMetrics().widthPixels-dp(30));
+            dialog.getWindow().setLayout(width,WindowManager.LayoutParams.WRAP_CONTENT);
+        }
     }
     private void unlockBrowser(){
         guest=false;pinnedOrigin=null;
@@ -430,19 +441,15 @@ public class MainActivity extends Activity {
         LinearLayout holder=new LinearLayout(this);
         holder.setOrientation(LinearLayout.HORIZONTAL);
         holder.setGravity(Gravity.CENTER);
-        holder.setBackground(bg(0xffdfc38e,15));
-        TextView symbol=new TextView(this);
-        symbol.setText("🔒");symbol.setTextSize(25);symbol.setGravity(Gravity.CENTER);
-        holder.addView(symbol,new LinearLayout.LayoutParams(dp(32),-1));
-        TextView title=new TextView(this);
-        title.setText(t("上锁","Bloquear"));
-        title.setTextColor(0xff251b16);title.setTextSize(19);
+        holder.setBackground(bg(0xffd8b77d,15));
+        TextView symbol=uiText("🔒",23,0xff271d17);
+        holder.addView(symbol,new LinearLayout.LayoutParams(dp(35),-1));
+        TextView title=uiText(t("上锁","Bloquear"),19,0xff271d17);
         title.setTypeface(null,android.graphics.Typeface.BOLD);
-        title.setGravity(Gravity.CENTER);
         holder.addView(title);
-        holder.setPadding(dp(8),0,dp(8),0);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(portuguese?146:126),dp(66));
-        lp.setMargins(dp(7),0,dp(8),0);
+        holder.setPadding(dp(5),0,dp(8),0);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(portuguese?140:118),dp(64));
+        lp.setMargins(dp(4),0,dp(8),0);
         toolbar.addView(holder,lp);
         holder.setOnClickListener(v->lockBrowser());
     }
