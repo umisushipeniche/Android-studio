@@ -26,6 +26,10 @@ public class MainActivity extends Activity {
     private boolean guest = false, portuguese = false, scanBusy = false;
     private String pinnedOrigin = null;
     private String pin = "";
+    private String recoveryHash = "";
+    private int wrongAttempts = 0;
+    private long blockedUntil = 0;
+    private FrameLayout browserFrame;
     private CameraDevice camera;
     private CameraCaptureSession cameraSession;
     private ImageReader reader;
@@ -34,65 +38,109 @@ public class MainActivity extends Activity {
     private Handler cameraHandler;
     private final MultiFormatReader qrDecoder = new MultiFormatReader();
     private static final int CAMERA_REQUEST = 100;
-    private final int coffee = Color.rgb(54, 41, 35);
-    private final int gold = Color.rgb(184, 145, 83);
+    private final int coffee = Color.rgb(43, 34, 30);
+    private final int gold = Color.rgb(205, 178, 129);
     private String t(String zh, String pt) { return portuguese ? pt : zh; }
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         portuguese = getPreferences(0).getBoolean("pt", false);
         pin = getPreferences(0).getString("pin", "");
+        recoveryHash = getPreferences(0).getString("recovery", "");
         getWindow().setStatusBarColor(coffee);
         getWindow().setNavigationBarColor(coffee);
         home();
     }
+    private int dp(int x) {return (int)(getResources().getDisplayMetrics().density*x+0.5f);}
+    private android.graphics.drawable.GradientDrawable bg(int color,int radius) {
+        android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();
+        d.setColor(color);d.setCornerRadius(dp(radius));return d;
+    }
     private void base() {
-        root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(0xfff6f2ed);
+        root = new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(coffee);
         setContentView(root);
     }
     private TextView button(String label, Runnable click) {
-        TextView b = new TextView(this); b.setText(label); b.setTextColor(Color.WHITE); b.setTextSize(16);
-        b.setGravity(Gravity.CENTER); b.setBackground(new ColorDrawable(coffee));
-        b.setPadding(18, 19, 18, 19); b.setOnClickListener(v -> click.run());
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.setMargins(12, 8, 12, 8); b.setLayoutParams(p);
+        TextView b=new TextView(this);b.setText(label);b.setTextColor(coffee);b.setTextSize(18);
+        b.setGravity(Gravity.CENTER);b.setBackground(bg(gold,16));b.setPadding(dp(14),dp(19),dp(14),dp(19));
+        b.setOnClickListener(v->click.run());
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(24),dp(8),dp(24),dp(8));b.setLayoutParams(lp);
         return b;
     }
+    private TextView subtle(String label,Runnable click){
+        TextView b=button(label,click);b.setTextColor(0xffe6d9c5);b.setTextSize(15);b.setBackground(bg(0xff3b302b,14));return b;
+    }
     private void home() {
-        stopCamera(); guest = false; pinnedOrigin = null;
+        stopCamera();guest=false;pinnedOrigin=null;address=null;
         getWindow().getDecorView().setSystemUiVisibility(0);
-        if (web != null) { root.removeView(web); web.destroy(); web = null; }
+        if(web!=null){web.stopLoading();web.destroy();web=null;}
         base();
-        TextView heading = new TextView(this); heading.setText("UMI BROWSER"); heading.setTextColor(coffee);
-        heading.setTextSize(28); heading.setGravity(Gravity.CENTER); heading.setPadding(15,45,15,35); root.addView(heading);
-        root.addView(button(t("扫描二维码", "Ler código QR"), this::scan));
-        root.addView(button(t("普通浏览器", "Navegador normal"), () -> openBrowser("https://www.google.com", false)));
-        root.addView(button(t("语言：中文 / Português", "Idioma: Português / 中文"), () -> {
-            portuguese = !portuguese; getPreferences(0).edit().putBoolean("pt", portuguese).apply(); home();
-        }));
-        root.addView(button(t("设置员工 PIN", "Definir PIN da equipa"), this::configurePin));
+        LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        root.addView(top,new LinearLayout.LayoutParams(-1,dp(68)));
+        TextView lang=new TextView(this);lang.setText(t("中文  ▾","Português  ▾"));lang.setTextColor(gold);
+        lang.setTextSize(15);lang.setPadding(dp(20),dp(12),dp(22),dp(12));top.addView(lang);
+        lang.setOnClickListener(v->{portuguese=!portuguese;getPreferences(0).edit().putBoolean("pt",portuguese).apply();home();});
+        Space upper=new Space(this);root.addView(upper,new LinearLayout.LayoutParams(1,0,1));
+        TextView heading=new TextView(this);heading.setText("UMI  SUSHI");heading.setTextColor(gold);
+        heading.setTypeface(android.graphics.Typeface.SERIF,android.graphics.Typeface.BOLD);heading.setTextSize(32);
+        heading.setGravity(Gravity.CENTER);root.addView(heading);
+        TextView sub=new TextView(this);sub.setText("B R O W S E R");sub.setTextColor(0xffb6a48f);
+        sub.setTextSize(12);sub.setGravity(Gravity.CENTER);sub.setPadding(0,dp(8),0,dp(34));root.addView(sub);
+        root.addView(button(t("▣   扫描二维码","▣   Ler código QR"),this::scan));
+        root.addView(subtle(t("🌐   普通浏览","🌐   Navegação normal"),()->openBrowser("https://www.google.com",false)));
+        Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
+        root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.1");foot.setTextColor(0xff8e8073);
+        foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
-    private void configurePin() {
-        if (!pin.isEmpty()) { askPin(() -> enterNewPin()); } else enterNewPin();
+    private String hash(String input){try{
+        byte[] bytes=java.security.MessageDigest.getInstance("SHA-256").digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        StringBuilder out=new StringBuilder();for(byte v:bytes)out.append(String.format(java.util.Locale.US,"%02x",v&255));return out.toString();
+    }catch(Exception e){return "";}}
+    private boolean validPin(String value){return pin.equals(value)||pin.equals("sha256:"+hash(value));}
+    private void pinMenu(){
+        String[] items={t("设置 / 修改 PIN","Definir / Alterar PIN"),t("忘记 PIN：使用恢复码重设","Esqueceu o PIN: recuperar")};
+        new AlertDialog.Builder(this).setTitle(t("员工安全设置","Segurança da equipa"))
+          .setItems(items,(d,which)->{if(which==0)configurePin();else resetPin();}).show();
     }
-    private void enterNewPin() {
-        EditText field = new EditText(this); field.setHint(t("至少 4 位数字", "Pelo menos 4 dígitos"));
-        field.setInputType(2); field.setPadding(30,20,30,20);
-        new AlertDialog.Builder(this).setTitle(t("设置员工 PIN", "Definir PIN"))
-            .setView(field).setNegativeButton(t("取消", "Cancelar"), null)
-            .setPositiveButton(t("保存", "Guardar"), (d,w) -> {
-                String p = field.getText().toString();
-                if (p.matches("[0-9]{4,12}")) { pin=p; getPreferences(0).edit().putString("pin",pin).apply(); }
-                else toast(t("请输入 4-12 位数字", "Introduza 4 a 12 dígitos"));
-            }).show();
+    private void configurePin(){if(!pin.isEmpty())askPin(this::enterNewPin);else enterNewPin();}
+    private void enterNewPin(){
+        EditText field=new EditText(this);field.setHint(t("4–8 位数字","4–8 dígitos"));field.setInputType(18);
+        new AlertDialog.Builder(this).setTitle(t("设置员工 PIN","Definir PIN")).setView(field)
+         .setNegativeButton(t("取消","Cancelar"),null).setPositiveButton(t("保存","Guardar"),(d,w)->{
+            String value=field.getText().toString();if(!value.matches("[0-9]{4,8}")){toast(t("需要 4–8 位数字","Use 4–8 dígitos"));return;}
+            pin="sha256:"+hash(value);getPreferences(0).edit().putString("pin",pin).apply();
+            if(recoveryHash.isEmpty())generateRecovery();else toast(t("PIN 已更新","PIN atualizado"));
+         }).show();
     }
-    private void askPin(Runnable success) {
-        EditText field = new EditText(this); field.setInputType(18); field.setPadding(30,20,30,20);
-        new AlertDialog.Builder(this).setTitle(t("员工 PIN", "PIN da equipa")).setView(field)
-            .setNegativeButton(t("取消", "Cancelar"),null)
-            .setPositiveButton(t("确认", "Confirmar"), (d,w) -> {
-                if (field.getText().toString().equals(pin)) success.run();
-                else toast(t("PIN 错误", "PIN incorreto"));
-            }).show();
+    private void generateRecovery(){
+        byte[] bytes=new byte[8];new java.security.SecureRandom().nextBytes(bytes);
+        StringBuilder code=new StringBuilder();for(byte v:bytes)code.append(String.format(java.util.Locale.US,"%02X",v&255));
+        recoveryHash=hash(code.toString());getPreferences(0).edit().putString("recovery",recoveryHash).apply();
+        new AlertDialog.Builder(this).setTitle(t("请保存管理员恢复码","Guarde o código de recuperação"))
+          .setMessage(t("请拍照或抄写并安全保存。此码只显示一次：\n\n","Guarde este código em segurança. Só aparece uma vez:\n\n")+code)
+          .setPositiveButton(t("已保存","Guardado"),null).show();
+    }
+    private void resetPin(){
+        if(recoveryHash.isEmpty()){new AlertDialog.Builder(this).setMessage(t("旧版 PIN 尚未设置恢复码。请先使用原 PIN 修改密码以生成恢复码；如果已忘记，只能由管理员清除应用数据重新设置（会丢失本地数据）。","Esta versão não tem código de recuperação. É necessário limpar os dados da aplicação para reconfigurar, perdendo os dados locais.")).setPositiveButton("OK",null).show();return;}
+        if(System.currentTimeMillis()<blockedUntil){toast(t("尝试过多，请稍后重试","Demasiadas tentativas. Aguarde."));return;}
+        EditText field=new EditText(this);field.setHint(t("输入管理员恢复码","Código de recuperação"));field.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle(t("重设 PIN","Repor PIN")).setView(field)
+          .setNegativeButton(t("取消","Cancelar"),null).setPositiveButton(t("验证","Verificar"),(d,w)->{
+            if(hash(field.getText().toString().trim().toUpperCase(java.util.Locale.US)).equals(recoveryHash)){
+                wrongAttempts=0;recoveryHash="";getPreferences(0).edit().remove("recovery").apply();enterNewPin();
+            }else{failedPin();}
+          }).show();
+    }
+    private void failedPin(){wrongAttempts++;if(wrongAttempts>=5){blockedUntil=System.currentTimeMillis()+60000;wrongAttempts=0;toast(t("错误次数过多，60 秒后再试","Aguarde 60 segundos"));}else toast(t("验证失败","Código incorreto"));}
+    private void askPin(Runnable success){
+        if(System.currentTimeMillis()<blockedUntil){toast(t("请稍后再试","Aguarde"));return;}
+        EditText field=new EditText(this);field.setInputType(18);
+        new AlertDialog.Builder(this).setTitle(t("员工 PIN","PIN da equipa")).setView(field)
+          .setNegativeButton(t("取消","Cancelar"),null).setPositiveButton(t("确认","Confirmar"),(d,w)->{
+            if(validPin(field.getText().toString())){wrongAttempts=0;success.run();}
+            else failedPin();
+          }).show();
     }
     private void scan() {
         if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -171,12 +219,7 @@ public class MainActivity extends Activity {
                 .setMessage(raw).setPositiveButton(t("完成", "Concluir"),(d,w)->home())
                 .setNegativeButton(t("重新扫描", "Ler novamente"),(d,w)->scan()).show();return;
         }
-        new AlertDialog.Builder(this).setTitle(t("选择打开方式", "Escolher modo"))
-            .setMessage(url).setPositiveButton(t("普通浏览", "Navegação normal"),(d,w)->openBrowser(url,false))
-            .setNeutralButton(t("客人模式", "Modo cliente"),(d,w)->{
-                if(pin.isEmpty()) { toast(t("请先设置员工 PIN", "Defina primeiro um PIN"));home(); }
-                else openBrowser(url,true);
-            }).setNegativeButton(t("取消", "Cancelar"),(d,w)->home()).show();
+        openBrowser(url,false);
     }
     private String normalize(String value) {
         try {
@@ -188,45 +231,66 @@ public class MainActivity extends Activity {
         try{Uri u=Uri.parse(url);return u.getScheme()+"://"+u.getHost()+(u.getPort()==-1?"":":"+u.getPort());}catch(Exception e){return "";}
     }
     private void openBrowser(String url,boolean lock) {
-        stopCamera();guest=lock;pinnedOrigin=lock?origin(url):null;base();
-        toolbar=new LinearLayout(this);toolbar.setOrientation(LinearLayout.HORIZONTAL);toolbar.setBackgroundColor(coffee);root.addView(toolbar);
-        if(!lock){
-            small("‹",()->{if(web.canGoBack())web.goBack();});
-            small("›",()->{if(web.canGoForward())web.goForward();});
-            address=new EditText(this);address.setSingleLine(true);address.setTextColor(Color.WHITE);address.setHintTextColor(0xffbbbbbb);
-            address.setHint("https://");toolbar.addView(address,new LinearLayout.LayoutParams(0,55,1));
-            address.setOnEditorActionListener((v,a,event)->{String typed=address.getText().toString().trim();
-                String target=normalize(typed);if(target==null)target="https://www.google.com/search?q="+Uri.encode(typed);
-                web.loadUrl(target);((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);return true;});
-            small("↻",()->web.reload());small("▣",this::scan);small("⌂",this::home);
-        }else{
-            TextView title=new TextView(this);title.setText("UMI · "+t("客人模式", "Modo cliente"));title.setTextColor(Color.WHITE);
-            title.setPadding(18,15,18,15);toolbar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-            small("🔒",()->askPin(this::endGuest));
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
-        }
-        web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));
-        WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);s.setSupportZoom(true);
-        s.setBuiltInZoomControls(true);s.setDisplayZoomControls(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        stopCamera();guest=false;pinnedOrigin=null;base();
+        toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setBackgroundColor(coffee);
+        root.addView(toolbar,new LinearLayout.LayoutParams(-1,dp(56)));
+        small("‹",()->{if(web.canGoBack())web.goBack();});
+        small("›",()->{if(web.canGoForward())web.goForward();});
+        address=new EditText(this);address.setSingleLine(true);address.setTextColor(0xfff3e8d7);
+        address.setHintTextColor(0xffb4a594);address.setHint("https://");address.setTextSize(13);
+        toolbar.addView(address,new LinearLayout.LayoutParams(0,dp(52),1));
+        address.setOnEditorActionListener((v,a,event)->{
+            String typed=address.getText().toString().trim();if(typed.isEmpty())return true;
+            String target=normalize(typed);if(target==null)target="https://www.google.com/search?q="+Uri.encode(typed);
+            web.loadUrl(target);((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);return true;
+        });
+        small("↻",()->web.reload());small("▣",this::scan);small("🔒",this::lockBrowser);small("⌂",this::home);
+        browserFrame=new FrameLayout(this);root.addView(browserFrame,new LinearLayout.LayoutParams(-1,0,1));
+        web=new WebView(this);browserFrame.addView(web,new FrameLayout.LayoutParams(-1,-1));
+        WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
+        settings.setSupportZoom(true);settings.setBuiltInZoomControls(true);settings.setDisplayZoomControls(false);
+        settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
         web.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){
                 Uri u=request.getUrl();String scheme=u.getScheme();
                 if(!"https".equalsIgnoreCase(scheme)&&!"http".equalsIgnoreCase(scheme))return true;
-                if(guest && request.isForMainFrame() && !origin(u.toString()).equalsIgnoreCase(pinnedOrigin)){
-                    runOnUiThread(()->toast(t("客人模式禁止离开当前网站", "Não pode sair deste site no modo cliente")));return true;
+                if(guest&&request.isForMainFrame()&&!origin(u.toString()).equalsIgnoreCase(pinnedOrigin)){
+                    runOnUiThread(()->toast(t("锁定模式禁止离开当前网站","Navegação restrita neste site")));return true;
                 }
                 return false;
             }
             @Override public void onPageFinished(WebView view,String current){if(!guest&&address!=null)address.setText(current);}
         });
-        web.setWebChromeClient(new WebChromeClient(){
-            @Override public boolean onJsAlert(WebView v,String u,String message,JsResult r){new AlertDialog.Builder(MainActivity.this).setMessage(message).setPositiveButton("OK",(d,w)->r.confirm()).setOnCancelListener(d->r.cancel()).show();return true;}
-        });
+        web.setWebChromeClient(new WebChromeClient());
         web.loadUrl(url);
+        if(lock)lockBrowser();
     }
-    private void small(String title,Runnable action){TextView b=new TextView(this);b.setText(title);b.setTextColor(Color.WHITE);b.setTextSize(18);b.setGravity(Gravity.CENTER);b.setPadding(10,10,10,10);toolbar.addView(b);b.setOnClickListener(v->action.run());}
+    private void lockBrowser(){
+        if(pin.isEmpty()){new AlertDialog.Builder(this).setTitle(t("请先设置员工 PIN","Defina primeiro o PIN"))
+            .setPositiveButton(t("设置","Definir"),(d,w)->enterNewPin()).setNegativeButton(t("取消","Cancelar"),null).show();return;}
+        String current=web.getUrl();if(current==null||normalize(current)==null){toast(t("请先打开网页","Abra primeiro uma página"));return;}
+        guest=true;pinnedOrigin=origin(current);toolbar.setVisibility(View.GONE);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        // Invisible staff-only hotspot: long-press the top-right 48dp corner for 2 seconds.
+        TextView unlock=new TextView(this);unlock.setBackgroundColor(Color.TRANSPARENT);
+        FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.RIGHT);
+        browserFrame.addView(unlock,lp);
+        unlock.setOnTouchListener(new View.OnTouchListener(){Handler h=new Handler(Looper.getMainLooper());Runnable task;
+            public boolean onTouch(View v,android.view.MotionEvent e){
+                if(e.getAction()==MotionEvent.ACTION_DOWN){task=()->askPin(()->unlockBrowser(unlock));h.postDelayed(task,2000);return true;}
+                if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){if(task!=null)h.removeCallbacks(task);return true;}
+                return true;
+            }
+        });
+    }
+    private void unlockBrowser(View hotspot){guest=false;pinnedOrigin=null;browserFrame.removeView(hotspot);
+        toolbar.setVisibility(View.VISIBLE);getWindow().getDecorView().setSystemUiVisibility(0);
+        if(address!=null&&web!=null)address.setText(web.getUrl());
+    }
+    private void small(String title,Runnable action){TextView b=new TextView(this);b.setText(title);b.setTextColor(gold);
+        b.setTextSize(18);b.setGravity(Gravity.CENTER);b.setPadding(dp(9),dp(8),dp(9),dp(8));toolbar.addView(b);b.setOnClickListener(v->action.run());}
     private void endGuest() {
         if(web!=null){web.stopLoading();web.loadUrl("about:blank");web.clearHistory();web.clearCache(true);web.clearFormData();}
         CookieManager.getInstance().removeAllCookies(null);CookieManager.getInstance().flush();
@@ -234,6 +298,6 @@ public class MainActivity extends Activity {
         home();
     }
     private void toast(String s){runOnUiThread(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
-    @Override public void onBackPressed(){if(guest){toast(t("请员工点击锁图标并输入 PIN", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
+    @Override public void onBackPressed(){if(guest){toast(t("请员工长按右上角 2 秒解锁", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
     @Override protected void onDestroy(){stopCamera();if(web!=null)web.destroy();super.onDestroy();}
 }

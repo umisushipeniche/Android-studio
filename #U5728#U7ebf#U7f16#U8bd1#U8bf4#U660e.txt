@@ -1,0 +1,9 @@
+UMI Browser v1.0 - GitHub Actions 在线编译说明
+
+1. 在 GitHub 新建一个空的 Repository（建议 Private）。
+2. 将本 ZIP 解压后的 UMI-Browser-v1.0 文件夹内部所有文件上传到仓库根目录；确保根目录有 settings.gradle、build.gradle、app/ 和 .github/。
+3. 打开仓库 Actions > Build UMI Browser APK > Run workflow。
+4. 等待编译；成功后在该次运行的 Artifacts 下载 UMI-Browser-v1.0-debug-APK.zip。
+5. 解压取得 app-debug.apk，使用 adb install -r "APK完整路径" 安装。
+
+注意：这是调试版 APK，源码未经过完整安全审计，也尚未在 TCL 平板上实机验证。第一次编译可能因源代码问题失败，需根据 Actions 日志修复。不要把员工 PIN、聚客后台账号或私人二维码上传到公开仓库。
