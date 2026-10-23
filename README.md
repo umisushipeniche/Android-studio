@@ -1,9 +1,7 @@
-# UMI Browser v1.3.3 — repair build
+# UMI Browser v1.3.4
 
-This is **source code**, not an APK. Upload its contents to the root of the GitHub repository and run Actions → Build UMI Browser APK. Download the workflow artifact and extract `app-debug.apk`.
+Based on v1.3.3. Home screen now exposes Android's status bar (time/battery) and adds a table-directory entry below Normal Browsing. Browser screen and existing lock/unlock behavior are retained.
 
-Fixes: drawn lock icon (no platform emoji), larger gold lock control, fully custom staff keypad, custom next-table action sheet, rotation handling, recover-mode dialog transition. The source is based on the prior v1.3.2 project and retains QR scanning and browser navigation.
+Table directory: grid of saved tables; tap to open stored QR URL, long press to edit/delete. Add via camera QR scan or manually enter a URL. Entries are stored locally in app preferences; uninstalling the app deletes them. Export/backup is not yet implemented. Do not use a single device as the only copy of table links.
 
-The workflow verifies the APK with Android `apksigner` after compiling. It does not guarantee on-device installation; test on TCL before use.
-
-**Important:** GitHub Actions debug APKs may have different signing keys between builds. An APK with a different signing key cannot update an installed copy. Do not uninstall a working version until the new APK is verified. The hard-coded administrator recovery code is not a secure secret.
+Build using the GitHub Actions workflow. This source has not been compiled or tested on physical Android devices in this environment.

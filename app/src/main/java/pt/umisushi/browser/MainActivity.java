@@ -19,6 +19,8 @@ import android.widget.*;
 import com.google.zxing.*;
 import com.google.zxing.common.HybridBinarizer;
 import java.util.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class MainActivity extends Activity {
     private LinearLayout root, toolbar;
@@ -26,6 +28,8 @@ public class MainActivity extends Activity {
     private EditText address;
     private boolean guest = false, portuguese = false, scanBusy = false;
     private String pinnedOrigin = null;
+    private boolean scanForTable = false;
+    private String pendingTableName = null;
     private String pin = "";
     private int wrongAttempts = 0;
     private long blockedUntil = 0;
@@ -52,6 +56,7 @@ public class MainActivity extends Activity {
         portuguese = getPreferences(0).getBoolean("pt", false);
         pin = getPreferences(0).getString("pin", "");
         getWindow().setStatusBarColor(coffee);
+        getWindow().getDecorView().setSystemUiVisibility(0); // Home shows time and battery.
         getWindow().setNavigationBarColor(coffee);
         home();
     }
@@ -76,7 +81,7 @@ public class MainActivity extends Activity {
         TextView b=button(label,click);b.setTextColor(0xffe6d9c5);b.setTextSize(15);b.setBackground(bg(0xff3b302b,14));return b;
     }
     private void home() {
-        stopCamera();guest=false;pinnedOrigin=null;address=null;unlockHotspot=null;unlockDialogOpen=false;
+        stopCamera();guest=false;pinnedOrigin=null;address=null;unlockHotspot=null;unlockDialogOpen=false;scanForTable=false;
         getWindow().getDecorView().setSystemUiVisibility(0);
         if(web!=null){web.stopLoading();web.destroy();web=null;}
         base();
@@ -93,10 +98,162 @@ public class MainActivity extends Activity {
         sub.setTextSize(12);sub.setGravity(Gravity.CENTER);sub.setPadding(0,dp(8),0,dp(34));root.addView(sub);
         root.addView(button(t("▣   扫描二维码","▣   Ler código QR"),this::scan));
         root.addView(subtle(t("🌐   普通浏览","🌐   Navegação normal"),()->openBrowser("https://www.google.com",false)));
+        TextView tables=button(t("▦   桌台目录","▦   Diretório de mesas"),this::tableDirectory);
+        tables.setBackground(bg(0xff594638,14));
+        tables.setTextColor(0xfff0d7a5);
+        tables.setTextSize(19);
+        root.addView(tables);
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.3");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.4");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
+    }
+
+    // Local table QR directory. Only web addresses are stored; never persist PINs here.
+    private JSONArray readTables(){
+        try{return new JSONArray(getPreferences(0).getString("table_directory","[]"));}
+        catch(Exception e){return new JSONArray();}
+    }
+    private void saveTable(String name,String url){
+        try{
+            JSONArray old=readTables(), updated=new JSONArray();
+            boolean replaced=false;
+            for(int i=0;i<old.length();i++){
+                JSONObject item=old.optJSONObject(i);
+                if(item==null)continue;
+                if(name.equalsIgnoreCase(item.optString("name"))){
+                    updated.put(new JSONObject().put("name",name).put("url",url));
+                    replaced=true;
+                }else updated.put(item);
+            }
+            if(!replaced)updated.put(new JSONObject().put("name",name).put("url",url));
+            getPreferences(0).edit().putString("table_directory",updated.toString()).apply();
+            toast(t("桌台已保存","Mesa guardada"));
+        }catch(Exception e){toast(t("保存失败","Erro ao guardar"));}
+    }
+    private void deleteTable(String name){
+        JSONArray old=readTables(), updated=new JSONArray();
+        for(int i=0;i<old.length();i++){
+            JSONObject item=old.optJSONObject(i);
+            if(item!=null&&!name.equals(item.optString("name")))updated.put(item);
+        }
+        getPreferences(0).edit().putString("table_directory",updated.toString()).apply();
+        tableDirectory();
+    }
+    private void tableDirectory(){
+        stopCamera();
+        scanForTable=false;
+        if(web!=null){web.stopLoading();web.destroy();web=null;}
+        getWindow().getDecorView().setSystemUiVisibility(0);
+        base();
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(12),dp(12),dp(14),dp(8));
+        root.addView(header,new LinearLayout.LayoutParams(-1,dp(76)));
+        TextView back=uiText("‹",35,0xffebd3a3);
+        header.addView(back,new LinearLayout.LayoutParams(dp(55),-1));
+        back.setOnClickListener(v->home());
+        TextView title=uiText(t("▦  桌台目录","▦  Diretório de mesas"),23,0xffebd3a3);
+        title.setTypeface(null,android.graphics.Typeface.BOLD);
+        header.addView(title,new LinearLayout.LayoutParams(0,-1,1));
+        TextView add=uiText(t("＋ 添加","＋ Adicionar"),17,0xff271d17);
+        add.setPadding(dp(12),0,dp(12),0);add.setBackground(bg(0xffdfc38e,13));
+        header.addView(add,new LinearLayout.LayoutParams(-2,dp(48)));
+        add.setOnClickListener(v->addTableDialog());
+        TextView description=uiText(t("点击桌台即可打开已保存的点餐网页；长按可编辑或删除。",
+            "Toque para abrir o link da mesa. Prima sem soltar para editar ou eliminar."),14,0xffc5ae8d);
+        description.setPadding(dp(20),dp(2),dp(20),dp(14));
+        root.addView(description);
+        ScrollView scroll=new ScrollView(this);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        GridLayout grid=new GridLayout(this);
+        int widthDp=(int)(getResources().getDisplayMetrics().widthPixels/getResources().getDisplayMetrics().density);
+        int columns=widthDp>=750?5:(widthDp>=500?4:3);
+        grid.setColumnCount(columns);
+        grid.setPadding(dp(10),dp(8),dp(10),dp(18));
+        scroll.addView(grid);
+        JSONArray saved=readTables();
+        if(saved.length()==0){
+            TextView empty=uiText(t("暂无桌台\n点击右上角「添加」保存桌台二维码。",
+                "Ainda não há mesas.\nToque em Adicionar para guardar um QR."),17,0xffcbb796);
+            empty.setGravity(Gravity.CENTER);
+            root.addView(empty,new LinearLayout.LayoutParams(-1,dp(95)));
+        }
+        int totalWidth=getResources().getDisplayMetrics().widthPixels-dp(20);
+        int cellWidth=Math.max(dp(85),totalWidth/columns-dp(12));
+        for(int i=0;i<saved.length();i++){
+            JSONObject item=saved.optJSONObject(i);if(item==null)continue;
+            String name=item.optString("name"),url=item.optString("url");
+            if(normalize(url)==null)continue;
+            LinearLayout tile=new LinearLayout(this);
+            tile.setOrientation(LinearLayout.VERTICAL);
+            tile.setGravity(Gravity.CENTER);
+            tile.setBackground(bg(0xff47372f,15));
+            TextView glyph=uiText("▦",29,0xffdfc38e);
+            glyph.setGravity(Gravity.CENTER);
+            tile.addView(glyph,new LinearLayout.LayoutParams(-1,dp(43)));
+            TextView label=uiText(name,16,0xfff2dfc1);
+            label.setMaxLines(2);label.setGravity(Gravity.CENTER);
+            tile.addView(label,new LinearLayout.LayoutParams(-1,dp(48)));
+            GridLayout.LayoutParams cell=new GridLayout.LayoutParams();
+            cell.width=cellWidth;cell.height=dp(110);
+            cell.setMargins(dp(6),dp(6),dp(6),dp(6));
+            grid.addView(tile,cell);
+            tile.setOnClickListener(v->openBrowser(url,false));
+            tile.setOnLongClickListener(v->{
+                new AlertDialog.Builder(this).setTitle(name)
+                    .setItems(new String[]{t("编辑","Editar"),t("删除","Eliminar")},
+                        (d,which)->{
+                            if(which==0)addTableDialog(name,url);
+                            else new AlertDialog.Builder(this).setTitle(t("删除桌台？","Eliminar mesa?"))
+                                .setMessage(name).setNegativeButton(t("取消","Cancelar"),null)
+                                .setPositiveButton(t("删除","Eliminar"),(dd,w)->deleteTable(name)).show();
+                        }).show();
+                return true;
+            });
+        }
+        TextView bottom=uiText(t("桌台二维码只保存在本机","Os links ficam guardados neste tablet"),12,0xff97816c);
+        bottom.setGravity(Gravity.CENTER);bottom.setPadding(0,dp(8),0,dp(15));
+        root.addView(bottom);
+    }
+    private void addTableDialog(){addTableDialog("","");}
+    private void addTableDialog(String existingName,String existingUrl){
+        LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(24),dp(8),dp(24),dp(4));
+        EditText name=new EditText(this);name.setSingleLine(true);
+        name.setHint(t("桌台名称，例如 A01","Nome da mesa, ex.: A01"));
+        name.setText(existingName);form.addView(name);
+        EditText url=new EditText(this);url.setSingleLine(true);
+        url.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        url.setHint("https://");url.setText(existingUrl);form.addView(url);
+        AlertDialog dlg=new AlertDialog.Builder(this)
+            .setTitle(t("添加桌台二维码","Adicionar QR da mesa")).setView(form)
+            .setNegativeButton(t("取消","Cancelar"),null)
+            .setNeutralButton(t("扫描二维码","Ler QR"),null)
+            .setPositiveButton(t("保存网址","Guardar link"),null).create();
+        dlg.setOnShowListener(d->{
+            dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{
+                String n=name.getText().toString().trim();
+                if(n.isEmpty()){name.setError(t("请输入桌台名称","Indique a mesa"));return;}
+                pendingTableName=n;scanForTable=true;dlg.dismiss();scan();
+            });
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                String n=name.getText().toString().trim(),target=normalize(url.getText().toString());
+                if(n.isEmpty()){name.setError(t("请输入桌台名称","Indique a mesa"));return;}
+                if(target==null){url.setError(t("请输入有效的 http/https 地址","Indique um URL válido"));return;}
+                if(!existingName.isEmpty()&&!existingName.equals(n))deleteTableSilently(existingName);
+                saveTable(n,target);dlg.dismiss();tableDirectory();
+            });
+        });
+        dlg.show();
+    }
+    private void deleteTableSilently(String name){
+        JSONArray old=readTables(),updated=new JSONArray();
+        for(int i=0;i<old.length();i++){
+            JSONObject item=old.optJSONObject(i);
+            if(item!=null&&!name.equals(item.optString("name")))updated.put(item);
+        }
+        getPreferences(0).edit().putString("table_directory",updated.toString()).apply();
     }
     private String hash(String input){try{
         byte[] bytes=java.security.MessageDigest.getInstance("SHA-256").digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -150,7 +307,7 @@ public class MainActivity extends Activity {
         TextView help = new TextView(this); help.setText(t("对准桌台或其他二维码", "Aponte para o código QR"));
         help.setTextColor(gold); help.setTextSize(19); help.setGravity(Gravity.CENTER); help.setPadding(10,20,10,20); root.addView(help);
         preview = new TextureView(this); root.addView(preview, new LinearLayout.LayoutParams(-1, 0, 1));
-        root.addView(button(t("取消", "Cancelar"), this::home));
+        root.addView(button(t("取消", "Cancelar"), ()->{if(scanForTable){scanForTable=false;tableDirectory();}else home();}));
         preview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             public void onSurfaceTextureAvailable(SurfaceTexture s,int w,int h){ startCamera(); }
             public void onSurfaceTextureSizeChanged(SurfaceTexture s,int w,int h){}
@@ -213,6 +370,19 @@ public class MainActivity extends Activity {
     }
     private void scanned(String raw) {
         stopCamera();
+        if(scanForTable){
+            scanForTable=false;
+            String target=normalize(raw);
+            if(target==null){
+                toast(t("二维码不是有效网页地址","O QR não contém um endereço web válido"));
+                tableDirectory();
+            }else{
+                saveTable(pendingTableName,target);
+                pendingTableName=null;
+                tableDirectory();
+            }
+            return;
+        }
         String url = normalize(raw);
         if(url==null) {
             new AlertDialog.Builder(this).setTitle(t("二维码内容", "Conteúdo do QR"))
