@@ -26,7 +26,8 @@ public class MainActivity extends Activity {
     private LinearLayout root, toolbar;
     private WebView web;
     private EditText address;
-    private boolean guest = false, portuguese = false, scanBusy = false;
+    private boolean guest = false, scanBusy = false;
+    private String language = "zh";
     private String pinnedOrigin = null;
     private boolean scanForTable = false;
     private String pendingTableName = null;
@@ -49,11 +50,85 @@ public class MainActivity extends Activity {
     private static final int CAMERA_REQUEST = 100;
     private final int coffee = Color.rgb(43, 34, 30);
     private final int gold = Color.rgb(205, 178, 129);
-    private String t(String zh, String pt) { return portuguese ? pt : zh; }
+    private String t(String zh, String pt) {
+        if ("pt".equals(language)) return pt;
+        if ("en".equals(language)) return english(zh);
+        return zh;
+    }
+    private String english(String zh) {
+        switch (zh) {
+            case "中文  ▾": return "中文  ▾";
+            case "▣   扫描二维码": return "▣   Scan QR code";
+            case "🌐   普通浏览": return "🌐   Normal browsing";
+            case "▦   桌台目录": return "▦   Table directory";
+            case "⚙   员工 PIN 设置 / 重设": return "⚙   Staff PIN settings / reset";
+            case "桌台已保存": return "Table saved";
+            case "保存失败": return "Could not save";
+            case "▦  桌台目录": return "▦  Table directory";
+            case "＋ 添加": return "＋ Add";
+            case "点击桌台即可打开已保存的点餐网页；长按可编辑或删除。": return "Tap a table to open its saved ordering page. Long-press to edit or delete.";
+            case "暂无桌台\n点击右上角「添加」保存桌台二维码。": return "No tables yet.\nTap Add to save a table QR code.";
+            case "编辑": return "Edit";
+            case "删除": return "Delete";
+            case "删除桌台？": return "Delete table?";
+            case "取消": return "Cancel";
+            case "桌台二维码只保存在本机": return "Table links are stored only on this device";
+            case "桌台名称，例如 A01": return "Table name, e.g. A01";
+            case "添加桌台二维码": return "Add table QR code";
+            case "扫描二维码": return "Scan QR code";
+            case "保存网址": return "Save URL";
+            case "请输入桌台名称": return "Enter a table name";
+            case "请输入有效的 http/https 地址": return "Enter a valid http/https URL";
+            case "设置 / 修改 PIN": return "Set / change PIN";
+            case "忘记 PIN：使用恢复码重设": return "Forgot PIN: use recovery code";
+            case "员工安全设置": return "Staff security settings";
+            case "4–8 位数字": return "4–8 digits";
+            case "设置员工 PIN": return "Set staff PIN";
+            case "保存": return "Save";
+            case "需要 4–8 位数字": return "Use 4–8 digits";
+            case "PIN 已保存": return "PIN saved";
+            case "尝试过多，请稍后重试": return "Too many attempts. Please wait.";
+            case "管理员恢复密码": return "Administrator recovery code";
+            case "重设员工 PIN": return "Reset staff PIN";
+            case "验证": return "Verify";
+            case "错误次数过多，60 秒后再试": return "Too many attempts. Try again in 60 seconds.";
+            case "验证失败": return "Incorrect code";
+            case "请稍后再试": return "Please wait";
+            case "员工 PIN": return "Staff PIN";
+            case "确认": return "Confirm";
+            case "对准桌台或其他二维码": return "Point at a table or other QR code";
+            case "需要摄像头权限": return "Camera permission required";
+            case "未找到后置摄像头": return "Rear camera unavailable";
+            case "相机启动失败": return "Could not start camera";
+            case "摄像头不可用": return "Camera unavailable";
+            case "二维码不是有效网页地址": return "QR code does not contain a valid web address";
+            case "二维码内容": return "QR content";
+            case "完成": return "Done";
+            case "重新扫描": return "Scan again";
+            case "锁定模式禁止离开当前网站": return "Browsing is restricted to this website in locked mode";
+            case "暂不支持文件下载": return "File downloads are not supported";
+            case "请先设置员工 PIN": return "Set a staff PIN first";
+            case "设置": return "Set";
+            case "请先打开网页": return "Open a webpage first";
+            case "员工解锁区域：长按三秒": return "Staff unlock area: hold for 3 seconds";
+            case "管理员恢复": return "Administrator recovery";
+            case "员工解锁": return "Staff unlock";
+            case "请输入管理员恢复码": return "Enter administrator recovery code";
+            case "请输入员工 PIN": return "Enter staff PIN";
+            case "返回员工解锁": return "Back to staff unlock";
+            case "忘记 PIN？": return "Forgot PIN?";
+            case "已解锁": return "Unlocked";
+            case "▣  扫描下一桌": return "▣  Scan next table";
+            case "继续浏览": return "Continue browsing";
+            case "上锁": return "Lock";
+            case "请员工长按右上角 3 秒解锁": return "Ask staff to hold the top-right corner for 3 seconds to unlock";
+            default: return zh;
+        }
+    }
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
-        portuguese = getPreferences(0).getBoolean("pt", false);
+        language = getPreferences(0).getString("language", getPreferences(0).getBoolean("pt", false) ? "pt" : "zh");
         pin = getPreferences(0).getString("pin", "");
         getWindow().setStatusBarColor(coffee);
         getWindow().getDecorView().setSystemUiVisibility(0); // Home shows time and battery.
@@ -87,9 +162,15 @@ public class MainActivity extends Activity {
         base();
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
         root.addView(top,new LinearLayout.LayoutParams(-1,dp(68)));
-        TextView lang=new TextView(this);lang.setText(t("中文  ▾","Português  ▾"));lang.setTextColor(gold);
+        TextView lang=new TextView(this);lang.setText("en".equals(language) ? "English  ▾" : ("pt".equals(language) ? "Português  ▾" : "中文  ▾"));lang.setTextColor(gold);
         lang.setTextSize(15);lang.setPadding(dp(20),dp(12),dp(22),dp(12));top.addView(lang);
-        lang.setOnClickListener(v->{portuguese=!portuguese;getPreferences(0).edit().putBoolean("pt",portuguese).apply();home();});
+        lang.setOnClickListener(v->new AlertDialog.Builder(this)
+            .setTitle("Language / Idioma / 语言")
+            .setItems(new String[]{"中文", "Português", "English"}, (d,which)->{
+                language = new String[]{"zh","pt","en"}[which];
+                getPreferences(0).edit().putString("language",language).apply();
+                home();
+            }).show());
         Space upper=new Space(this);root.addView(upper,new LinearLayout.LayoutParams(1,0,1));
         TextView heading=new TextView(this);heading.setText("UMI  SUSHI");heading.setTextColor(gold);
         heading.setTypeface(android.graphics.Typeface.SERIF,android.graphics.Typeface.BOLD);heading.setTextSize(32);
@@ -105,7 +186,7 @@ public class MainActivity extends Activity {
         root.addView(tables);
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.4");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.5");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
 
