@@ -3,6 +3,8 @@ name: Build UMI Browser APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main, master]
 
@@ -39,6 +41,65 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: UMI-Browser-v1.0-debug-APK
+          name: UMI-Browser-v1.3.6-test-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  release:
+    name: Build signed release APK (manual only)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Restore private signing keystore
+        shell: bash
+        env:
+          UMI_KEYSTORE_BASE64: ${{ secrets.UMI_KEYSTORE_BASE64 }}
+          UMI_SIGNING_PASSWORD: ${{ secrets.UMI_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${UMI_KEYSTORE_BASE64}" || -z "${UMI_SIGNING_PASSWORD}" ]]; then
+            echo "::error::Set UMI_KEYSTORE_BASE64 and UMI_SIGNING_PASSWORD in repository Actions secrets."
+            exit 1
+          fi
+          printf '%s' "$UMI_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umi-browser-release.p12"
+          chmod 600 "$RUNNER_TEMP/umi-browser-release.p12"
+          echo "UMI_SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/umi-browser-release.p12" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          UMI_SIGNING_PASSWORD: ${{ secrets.UMI_SIGNING_PASSWORD }}
+        run: gradle --no-daemon --stacktrace assembleRelease
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload signed release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: UMI-Browser-v1.3.6-signed-release-APK
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
