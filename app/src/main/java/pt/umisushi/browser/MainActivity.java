@@ -728,7 +728,7 @@ public class MainActivity extends Activity {
         title.setTypeface(null,android.graphics.Typeface.BOLD);
         holder.addView(title);
         holder.setPadding(dp(5),0,dp(8),0);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(portuguese?140:118),dp(64));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp("pt".equals(language)?140:118),dp(64));
         lp.setMargins(dp(4),0,dp(8),0);
         toolbar.addView(holder,lp);
         holder.setOnClickListener(v->lockBrowser());
