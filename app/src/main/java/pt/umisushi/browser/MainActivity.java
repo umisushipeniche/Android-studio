@@ -24,6 +24,30 @@ import org.json.JSONObject;
 
 public class MainActivity extends Activity {
     private LinearLayout root, toolbar;
+    private TextView homeBattery;
+    private boolean batteryReceiverRegistered = false;
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (homeBattery == null || intent == null) return;
+            int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+            int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            if (level < 0 || scale <= 0) { homeBattery.setVisibility(View.GONE); return; }
+            int percent = Math.round(level * 100f / scale);
+            boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+                || status == BatteryManager.BATTERY_STATUS_FULL;
+            homeBattery.setVisibility(View.VISIBLE);
+            homeBattery.setText((charging ? "⚡ " : "▰ ") + percent + "%");
+            homeBattery.setTextColor(percent < 20 && !charging ? 0xffff7777 : gold);
+        }
+    };
+    private void stopHomeBattery() {
+        if (batteryReceiverRegistered) {
+            try { unregisterReceiver(batteryReceiver); } catch (IllegalArgumentException ignored) {}
+            batteryReceiverRegistered = false;
+        }
+        homeBattery = null;
+    }
     private WebView web;
     private EditText address;
     private boolean guest = false, scanBusy = false;
@@ -142,6 +166,7 @@ public class MainActivity extends Activity {
         d.setColor(color);d.setCornerRadius(dp(radius));return d;
     }
     private void base() {
+        stopHomeBattery();
         root = new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(coffee);
         setContentView(root);
     }
@@ -162,6 +187,14 @@ public class MainActivity extends Activity {
         base();
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
         root.addView(top,new LinearLayout.LayoutParams(-1,dp(68)));
+        homeBattery = new TextView(this);
+        homeBattery.setTextColor(gold);
+        homeBattery.setTextSize(16);
+        homeBattery.setGravity(Gravity.CENTER_VERTICAL);
+        homeBattery.setPadding(dp(12),dp(10),dp(8),dp(10));
+        top.addView(homeBattery);
+        registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        batteryReceiverRegistered = true;
         TextView lang=new TextView(this);lang.setText("en".equals(language) ? "English  ▾" : ("pt".equals(language) ? "Português  ▾" : "中文  ▾"));lang.setTextColor(gold);
         lang.setTextSize(15);lang.setPadding(dp(20),dp(12),dp(22),dp(12));top.addView(lang);
         lang.setOnClickListener(v->new AlertDialog.Builder(this)
@@ -186,7 +219,7 @@ public class MainActivity extends Activity {
         root.addView(tables);
         Space lower=new Space(this);root.addView(lower,new LinearLayout.LayoutParams(1,0,1));
         root.addView(subtle(t("⚙   员工 PIN 设置 / 重设","⚙   PIN da equipa / Recuperar"),this::pinMenu));
-        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.5");foot.setTextColor(0xff8e8073);
+        TextView foot=new TextView(this);foot.setText("UMI Browser  ·  v1.3.7");foot.setTextColor(0xff8e8073);
         foot.setGravity(Gravity.CENTER);foot.setPadding(0,dp(12),0,dp(18));root.addView(foot);
     }
 
@@ -742,5 +775,5 @@ public class MainActivity extends Activity {
     private void toast(String s){runOnUiThread(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
     @Override public void onBackPressed(){if(guest){toast(t("请员工长按右上角 3 秒解锁", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
     @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);}
-    @Override protected void onDestroy(){stopCamera();if(web!=null)web.destroy();super.onDestroy();}
+    @Override protected void onDestroy(){stopHomeBattery();stopCamera();if(web!=null)web.destroy();super.onDestroy();}
 }
