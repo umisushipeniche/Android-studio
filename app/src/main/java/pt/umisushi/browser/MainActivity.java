@@ -48,10 +48,6 @@ public class MainActivity extends Activity {
         }
         homeBattery = null;
     }
-    @Override protected void onDestroy() {
-        stopHomeBattery();
-        super.onDestroy();
-    }
     private WebView web;
     private EditText address;
     private boolean guest = false, scanBusy = false;
@@ -779,5 +775,5 @@ public class MainActivity extends Activity {
     private void toast(String s){runOnUiThread(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
     @Override public void onBackPressed(){if(guest){toast(t("请员工长按右上角 3 秒解锁", "Peça à equipa para desbloquear"));}else if(web!=null&&web.canGoBack())web.goBack();else home();}
     @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);}
-    @Override protected void onDestroy(){stopCamera();if(web!=null)web.destroy();super.onDestroy();}
+    @Override protected void onDestroy(){stopHomeBattery();stopCamera();if(web!=null)web.destroy();super.onDestroy();}
 }
